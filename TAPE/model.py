@@ -1,11 +1,13 @@
-import torch
 import random
 import warnings
+
 import numpy as np
-from tqdm import tqdm
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 warnings.filterwarnings("ignore")
 
@@ -135,6 +137,12 @@ def initialize_weight(m):
 
 
 class scaden():
+    @classmethod
+    def from_file(cls, load_path):
+        obj = cls.__new__(cls)
+        obj.load_model(load_path)
+        return obj
+
     def __init__(self, architectures, train_x, train_y, lr=1e-4, batch_size=128, epochs=20):
         self.architectures = architectures
         self.model512 = None
@@ -146,6 +154,9 @@ class scaden():
         self.inputdim = train_x.shape[1]
         self.outputdim = train_y.shape[1]
         self.train_loader = DataLoader(simdatset(train_x, train_y), batch_size=batch_size, shuffle=True)
+
+        self.gene_names = None
+        self.label_names = None
 
     def _subtrain(self, model, optimizer):
         model.train()
@@ -202,6 +213,26 @@ class scaden():
         if mode == 'all':
             pred = (self.model256(test_x) + self.model512(test_x) + self.model1024(test_x)) / 3
         return pred.cpu().detach().numpy()
+
+    def save_model(self, path, genes_names: list, label_names: list):
+        torch.save({"inputdim": self.inputdim, "outputdim": self.outputdim, "architectures": self.architectures, "genes_names": genes_names, "label_names": label_names},
+                   path + '/architecture.pt')
+        torch.save(self.model256.state_dict(), path + '/model256.pt')
+        torch.save(self.model512.state_dict(), path + '/model512.pt')
+        torch.save(self.model1024.state_dict(), path + '/model1024.pt')
+
+    def load_model(self, path):
+        architecture = torch.load(path + '/architecture.pt', map_location='cpu')
+        self.inputdim = architecture['inputdim']
+        self.outputdim = architecture['outputdim']
+        self.architectures = architecture['architectures']
+        self.gene_names = architecture['genes_names']
+        self.label_names = architecture['label_names']
+
+        self.build_model()
+        self.model256.load_state_dict(torch.load(path + '/model256.pt', map_location='cpu'))
+        self.model512.load_state_dict(torch.load(path + '/model512.pt', map_location='cpu'))
+        self.model1024.load_state_dict(torch.load(path + '/model1024.pt', map_location='cpu'))
 
 
 def reproducibility(seed=9):
