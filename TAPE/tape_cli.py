@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from model import reproducibility, scaden
+from .model import reproducibility, scaden
 
 PROPORTION_PREFIX = "$proportions_"
 
