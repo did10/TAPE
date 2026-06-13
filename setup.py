@@ -21,4 +21,9 @@ setup(
         'seaborn>=0.11',
         'argparse>=1.4',
     ],
+    entry_points={
+        "console_scripts": [
+            "tape-scaden=TAPE.tape_cli:main",
+        ]
+    },
 )
