@@ -18,6 +18,7 @@ setup(
         'anndata>=0.7.6',
         'tqdm>=4.6',
         'scikit-learn>=0.23',
-        'seaborn>=0.11'
+        'seaborn>=0.11',
+        'argparse>=1.4',
     ],
 )
