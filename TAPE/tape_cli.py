@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-
+import torch
 import pandas as pd
 
 from .model import reproducibility, scaden
@@ -51,7 +51,8 @@ def _load_expression(h5ad_path: Path) -> pd.DataFrame:
     return expression
 
 
-def train(train_h5ad: Path, output_dir: Path, batch_size: int, epochs: int, seed: int) -> Path:
+def train(train_h5ad: Path, output_dir: Path, batch_size: int, epochs: int, seed: int, threads:int) -> Path:
+    torch.set_num_threads(threads)
     expression, props = _load_training_data(train_h5ad)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -62,7 +63,8 @@ def train(train_h5ad: Path, output_dir: Path, batch_size: int, epochs: int, seed
     return output_dir
 
 
-def predict(model_dir: Path, test_h5ad: Path, output_dir: Path) -> Path:
+def predict(model_dir: Path, test_h5ad: Path, output_dir: Path, threads: int) -> Path:
+    torch.set_num_threads(threads)
     expression = _load_expression(test_h5ad)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -87,11 +89,13 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--batch-size", "--batch_size", dest="batch_size", type=int, default=128)
     train_parser.add_argument("--epochs", type=int, default=128)
     train_parser.add_argument("--seed", type=int, default=0)
+    train_parser.add_argument("--threads", type=int, help="Threads used by torch", default=4)
 
     predict_parser = subparsers.add_parser("predict", help="Run Scaden inference from a saved model")
     predict_parser.add_argument("--model-dir", type=Path, required=True, help="Directory containing architecture.pt and model weights")
     predict_parser.add_argument("--test-h5ad", type=Path, required=True, help="Test dataset in .h5ad format")
     predict_parser.add_argument("--output-dir", type=Path, required=True, help="Directory where predictions.tsv is written")
+    predict_parser.add_argument("--threads", type=int, help="Threads used by torch", default=4)
 
     return parser
 
@@ -101,9 +105,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "train":
-        train(args.train_h5ad, args.output_dir, args.batch_size, args.epochs, args.seed)
+        train(args.train_h5ad, args.output_dir, args.batch_size, args.epochs, args.seed, args.threads)
     elif args.command == "predict":
-        predict(args.model_dir, args.test_h5ad, args.output_dir)
+        predict(args.model_dir, args.test_h5ad, args.output_dir, args.threads)
     else:
         parser.error(f"Unsupported command: {args.command}")
     return 0
