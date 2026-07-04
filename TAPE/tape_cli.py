@@ -76,14 +76,15 @@ def _load_expression(h5ad_path: Path) -> pd.DataFrame:
 
 
 def train(train_h5ad: Path, output_dir: Path, batch_size: int, epochs: int, seed: int, threads: int,
-          architectures: list[list[int]], dropouts: list[list[float]], loss_fn: str = "l1") -> Path:
+          architectures: list[list[int]], dropouts: list[list[float]], loss_fn: str = "l1",
+          weight_decay: float = 0.0) -> Path:
     torch.set_num_threads(threads)
     expression, props = _load_training_data(train_h5ad)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     reproducibility(seed)
     model = scaden(architectures, dropouts, expression.to_numpy(), props.to_numpy(),
-                   batch_size=batch_size, epochs=epochs, loss_fn=loss_fn)
+                   batch_size=batch_size, epochs=epochs, loss_fn=loss_fn, weight_decay=weight_decay)
     model.train()
     model.save_model(str(output_dir), expression.columns.tolist(), props.columns.tolist())
     return output_dir
@@ -123,6 +124,8 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--loss-fn", "--loss_fn", dest="loss_fn", type=str, default="l1",
                               choices=["l1", "mse", "ccc", "combined", "cross_entropy"],
                               help="Loss function to use during training (default: l1)")
+    train_parser.add_argument("--weight-decay", "--weight_decay", dest="weight_decay", type=float, default=0.0,
+                              help="Weight decay (L2 regularization) for Adam optimizer (default: 0.0)")
 
     predict_parser = subparsers.add_parser("predict", help="Run Scaden inference from a saved model")
     predict_parser.add_argument("--model-dir", type=Path, required=True, help="Directory containing architecture.pt and model weights")
@@ -146,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
             if len(arch) != len(do):
                 parser.error(f"Model {i}: --architecture ({arch}) and --dropout ({do}) must have the same number of layers")
         train(args.train_h5ad, args.output_dir, args.batch_size, args.epochs, args.seed, args.threads,
-              architectures, dropouts, loss_fn=args.loss_fn)
+              architectures, dropouts, loss_fn=args.loss_fn, weight_decay=args.weight_decay)
     elif args.command == "predict":
         predict(args.model_dir, args.test_h5ad, args.output_dir, args.threads)
     else:

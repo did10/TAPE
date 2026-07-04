@@ -99,13 +99,14 @@ class scaden():
         obj.load_model(load_path)
         return obj
 
-    def __init__(self, architectures, dropouts, train_x, train_y, lr=1e-4, batch_size=128, epochs=20, loss_fn="l1"):
+    def __init__(self, architectures, dropouts, train_x, train_y, lr=1e-4, batch_size=128, epochs=20, loss_fn="l1", weight_decay=0.0):
         self.architectures = architectures      # list of list[int], one per model
         self.dropouts = dropouts                # list of list[float], one per model
         self.models = []
         self.lr = lr
         self.batch_size = batch_size
         self.epochs = epochs
+        self.weight_decay = weight_decay
         self.inputdim = train_x.shape[1]
         self.outputdim = train_y.shape[1]
         self.train_loader = DataLoader(simdatset(train_x, train_y), batch_size=batch_size, shuffle=True)
@@ -134,7 +135,7 @@ class scaden():
     def train(self):
         self.build_models()
         for i, model in enumerate(self.models):
-            optimizer = torch.optim.Adam(model.parameters(), lr=self.lr, eps=1e-07)
+            optimizer = torch.optim.Adam(model.parameters(), lr=self.lr, eps=1e-07, weight_decay=self.weight_decay)
             print(f'Training model {i}/{len(self.models)} ...')
             self.models[i], _ = self._subtrain(model, optimizer)
         print('Training is done')
@@ -166,6 +167,7 @@ class scaden():
             "architectures": self.architectures,
             "dropouts": self.dropouts,
             "loss_fn": self.loss_fn,
+            "weight_decay": self.weight_decay,
             "genes_names": genes_names,
             "label_names": label_names
         }, path + '/architecture.pt')
@@ -179,6 +181,7 @@ class scaden():
         self.architectures = arch['architectures']
         self.dropouts = arch['dropouts']
         self.loss_fn = arch.get('loss_fn', 'l1')
+        self.weight_decay = arch.get('weight_decay', 0.0)
         self.gene_names = arch['genes_names']
         self.label_names = arch['label_names']
         self.build_models()
