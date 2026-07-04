@@ -99,7 +99,7 @@ class scaden():
         obj.load_model(load_path)
         return obj
 
-    def __init__(self, architectures, dropouts, train_x, train_y, lr=1e-4, batch_size=128, epochs=20, loss_fn="l1", weight_decay=0.0):
+    def __init__(self, architectures, dropouts, train_x, train_y, lr=1e-4, batch_size=128, epochs=20, loss_fn="l1", weight_decay=0.0, patience=None, val_x=None, val_y=None):
         self.architectures = architectures      # list of list[int], one per model
         self.dropouts = dropouts                # list of list[float], one per model
         self.models = []
@@ -107,9 +107,14 @@ class scaden():
         self.batch_size = batch_size
         self.epochs = epochs
         self.weight_decay = weight_decay
+        self.patience = patience
         self.inputdim = train_x.shape[1]
         self.outputdim = train_y.shape[1]
         self.train_loader = DataLoader(simdatset(train_x, train_y), batch_size=batch_size, shuffle=True)
+        if val_x is not None and val_y is not None:
+            self.val_loader = DataLoader(simdatset(val_x, val_y), batch_size=batch_size, shuffle=False)
+        else:
+            self.val_loader = None
         self.gene_names = None
         self.label_names = None
         if loss_fn not in LOSS_REGISTRY:
@@ -119,14 +124,47 @@ class scaden():
     def _subtrain(self, model, optimizer):
         model.train()
         loss = []
-        for _ in tqdm(range(self.epochs)):
+        best_val_loss = float('inf')
+        best_state_dict = None
+        epochs_no_improve = 0
+        early_stopped = False
+        best_epoch = 0
+
+        for epoch in tqdm(range(self.epochs)):
             for data, label in self.train_loader:
                 optimizer.zero_grad()
                 batch_loss = self._compute_loss(model(data), label)
                 batch_loss.backward()
                 optimizer.step()
                 loss.append(batch_loss.cpu().detach().numpy())
-        return model, loss
+
+            # Early stopping check after each epoch
+            if self.patience is not None and self.val_loader is not None:
+                model.eval()
+                val_loss = 0.0
+                n_val_batches = 0
+                with torch.no_grad():
+                    for val_data, val_label in self.val_loader:
+                        val_loss += self._compute_loss(model(val_data), val_label).item()
+                        n_val_batches += 1
+                val_loss /= n_val_batches
+                model.train()
+
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                    epochs_no_improve = 0
+                    best_epoch = epoch
+                else:
+                    epochs_no_improve += 1
+                    if epochs_no_improve >= self.patience:
+                        early_stopped = True
+                        model.load_state_dict(best_state_dict)
+                        model = model.to(device)
+                        print(f'  Early stopping triggered at epoch {epoch+1}, best epoch {best_epoch+1}')
+                        break
+
+        return model, loss, early_stopped, best_epoch
 
     def _compute_loss(self, pred, target):
         """Compute loss using the configured loss function."""
@@ -137,7 +175,9 @@ class scaden():
         for i, model in enumerate(self.models):
             optimizer = torch.optim.Adam(model.parameters(), lr=self.lr, eps=1e-07, weight_decay=self.weight_decay)
             print(f'Training model {i}/{len(self.models)} ...')
-            self.models[i], _ = self._subtrain(model, optimizer)
+            self.models[i], _, early_stopped, best_epoch = self._subtrain(model, optimizer)
+            if early_stopped:
+                print(f'  Model {i}: early stopped, best epoch {best_epoch+1}')
         print('Training is done')
 
     def build_models(self):
@@ -168,6 +208,7 @@ class scaden():
             "dropouts": self.dropouts,
             "loss_fn": self.loss_fn,
             "weight_decay": self.weight_decay,
+            "patience": self.patience,
             "genes_names": genes_names,
             "label_names": label_names
         }, path + '/architecture.pt')
@@ -182,6 +223,8 @@ class scaden():
         self.dropouts = arch['dropouts']
         self.loss_fn = arch.get('loss_fn', 'l1')
         self.weight_decay = arch.get('weight_decay', 0.0)
+        self.patience = arch.get('patience', None)
+        self.val_loader = None
         self.gene_names = arch['genes_names']
         self.label_names = arch['label_names']
         self.build_models()

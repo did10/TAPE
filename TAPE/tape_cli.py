@@ -77,14 +77,26 @@ def _load_expression(h5ad_path: Path) -> pd.DataFrame:
 
 def train(train_h5ad: Path, output_dir: Path, batch_size: int, epochs: int, seed: int, threads: int,
           architectures: list[list[int]], dropouts: list[list[float]], loss_fn: str = "l1",
-          weight_decay: float = 0.0) -> Path:
+          weight_decay: float = 0.0, patience: int | None = None,
+          val_h5ad: Path | None = None) -> Path:
     torch.set_num_threads(threads)
     expression, props = _load_training_data(train_h5ad)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    val_expr, val_props = None, None
+    if val_h5ad is not None and patience is not None:
+        val_expr, val_props = _load_training_data(val_h5ad)
+    elif val_h5ad is not None and patience is None:
+        print("Warning: --val-h5ad provided without --patience. Validation data will be ignored.")
+    elif patience is not None and val_h5ad is None:
+        print("Warning: --patience provided without --val-h5ad. Early stopping disabled.")
+
     reproducibility(seed)
     model = scaden(architectures, dropouts, expression.to_numpy(), props.to_numpy(),
-                   batch_size=batch_size, epochs=epochs, loss_fn=loss_fn, weight_decay=weight_decay)
+                   batch_size=batch_size, epochs=epochs, loss_fn=loss_fn, weight_decay=weight_decay,
+                   patience=patience,
+                   val_x=val_expr.to_numpy() if val_expr is not None else None,
+                   val_y=val_props.to_numpy() if val_props is not None else None)
     model.train()
     model.save_model(str(output_dir), expression.columns.tolist(), props.columns.tolist())
     return output_dir
@@ -126,6 +138,10 @@ def build_parser() -> argparse.ArgumentParser:
                               help="Loss function to use during training (default: l1)")
     train_parser.add_argument("--weight-decay", "--weight_decay", dest="weight_decay", type=float, default=0.0,
                               help="Weight decay (L2 regularization) for Adam optimizer (default: 0.0)")
+    train_parser.add_argument("--patience", type=int, default=None,
+                              help="Early stopping patience (epochs with no improvement before stopping). Requires --val-h5ad (default: None)")
+    train_parser.add_argument("--val-h5ad", "--val_h5ad", dest="val_h5ad", type=Path, default=None,
+                              help="Validation dataset in .h5ad format for early stopping (default: None)")
 
     predict_parser = subparsers.add_parser("predict", help="Run Scaden inference from a saved model")
     predict_parser.add_argument("--model-dir", type=Path, required=True, help="Directory containing architecture.pt and model weights")
@@ -149,7 +165,8 @@ def main(argv: list[str] | None = None) -> int:
             if len(arch) != len(do):
                 parser.error(f"Model {i}: --architecture ({arch}) and --dropout ({do}) must have the same number of layers")
         train(args.train_h5ad, args.output_dir, args.batch_size, args.epochs, args.seed, args.threads,
-              architectures, dropouts, loss_fn=args.loss_fn, weight_decay=args.weight_decay)
+              architectures, dropouts, loss_fn=args.loss_fn, weight_decay=args.weight_decay,
+              patience=args.patience, val_h5ad=args.val_h5ad)
     elif args.command == "predict":
         predict(args.model_dir, args.test_h5ad, args.output_dir, args.threads)
     else:
