@@ -129,10 +129,10 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--epochs", type=int, default=128)
     train_parser.add_argument("--seed", type=int, default=0)
     train_parser.add_argument("--threads", type=int, help="Threads used by torch", default=4)
-    train_parser.add_argument("--architecture", type=str, required=True,
-                              help="Nested list of hidden layer sizes per model, e.g. [[256,128,64,32],[512,256,128,64]]")
-    train_parser.add_argument("--dropout", type=str, required=True,
-                              help="Nested list of dropout rates per model, e.g. [[0,0,0,0],[0,0.3,0.2,0.1]]")
+    train_parser.add_argument("--architecture", type=str,
+                              help="Nested list of hidden layer sizes per model, e.g. [[256,128,64,32],[512,256,128,64]]", default="[[256, 128, 64, 32],[512, 256, 128, 64],[1024, 512, 256, 128]]")
+    train_parser.add_argument("--dropout", type=str,
+                              help="Nested list of dropout rates per model, e.g. [[0,0,0,0],[0,0.3,0.2,0.1]]", default="[[0, 0, 0, 0],[0, 0.3, 0.2, 0.1],[0, 0.6, 0.3, 0.1]]")
     train_parser.add_argument("--loss-fn", "--loss_fn", dest="loss_fn", type=str, default="l1",
                               choices=["l1", "mse", "ccc", "combined", "cross_entropy"],
                               help="Loss function to use during training (default: l1)")
