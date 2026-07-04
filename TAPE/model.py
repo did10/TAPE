@@ -64,10 +64,10 @@ class scaden():
         obj.load_model(load_path)
         return obj
 
-    def __init__(self, hidden_units, dropout_rates, train_x, train_y, lr=1e-4, batch_size=128, epochs=20):
-        self.hidden_units = hidden_units
-        self.dropout_rates = dropout_rates
-        self.model = None
+    def __init__(self, architectures, dropouts, train_x, train_y, lr=1e-4, batch_size=128, epochs=20):
+        self.architectures = architectures      # list of list[int], one per model
+        self.dropouts = dropouts                # list of list[float], one per model
+        self.models = []
         self.lr = lr
         self.batch_size = batch_size
         self.epochs = epochs
@@ -90,44 +90,56 @@ class scaden():
         return model, loss
 
     def train(self):
-        self.build_model()
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, eps=1e-07)
-        print('Training model...')
-        self.model, loss = self._subtrain(self.model, optimizer)
+        self.build_models()
+        for i, model in enumerate(self.models):
+            optimizer = torch.optim.Adam(model.parameters(), lr=self.lr, eps=1e-07)
+            print(f'Training model {i}/{len(self.models)} ...')
+            self.models[i], _ = self._subtrain(model, optimizer)
         print('Training is done')
 
-    def build_model(self):
-        self.model = MLP(self.inputdim, self.outputdim, self.hidden_units, self.dropout_rates)
-        self.model = self.model.to(device)
-        self.model.apply(initialize_weight)
+    def build_models(self):
+        self.models = []
+        for hidden_units, dropout_rates in zip(self.architectures, self.dropouts):
+            model = MLP(self.inputdim, self.outputdim, hidden_units, dropout_rates)
+            model = model.to(device)
+            model.apply(initialize_weight)
+            self.models.append(model)
 
     def predict(self, test_x):
         test_x = torch.from_numpy(test_x).to(device).float()
-        self.model.eval()
-        pred = self.model(test_x)
-        return pred.cpu().detach().numpy()
+        pred_sum = None
+        for model in self.models:
+            model.eval()
+            pred = model(test_x)
+            if pred_sum is None:
+                pred_sum = pred
+            else:
+                pred_sum += pred
+        return (pred_sum / len(self.models)).cpu().detach().numpy()
 
     def save_model(self, path, genes_names: list, label_names: list):
         torch.save({
             "inputdim": self.inputdim,
             "outputdim": self.outputdim,
-            "hidden_units": self.hidden_units,
-            "dropout_rates": self.dropout_rates,
+            "architectures": self.architectures,
+            "dropouts": self.dropouts,
             "genes_names": genes_names,
             "label_names": label_names
         }, path + '/architecture.pt')
-        torch.save(self.model.state_dict(), path + '/model.pt')
+        for i, model in enumerate(self.models):
+            torch.save(model.state_dict(), path + f'/model_{i}.pt')
 
     def load_model(self, path):
-        architecture = torch.load(path + '/architecture.pt', map_location='cpu')
-        self.inputdim = architecture['inputdim']
-        self.outputdim = architecture['outputdim']
-        self.hidden_units = architecture['hidden_units']
-        self.dropout_rates = architecture['dropout_rates']
-        self.gene_names = architecture['genes_names']
-        self.label_names = architecture['label_names']
-        self.build_model()
-        self.model.load_state_dict(torch.load(path + '/model.pt', map_location='cpu'))
+        arch = torch.load(path + '/architecture.pt', map_location='cpu')
+        self.inputdim = arch['inputdim']
+        self.outputdim = arch['outputdim']
+        self.architectures = arch['architectures']
+        self.dropouts = arch['dropouts']
+        self.gene_names = arch['genes_names']
+        self.label_names = arch['label_names']
+        self.build_models()
+        for i, model in enumerate(self.models):
+            model.load_state_dict(torch.load(path + f'/model_{i}.pt', map_location='cpu'))
 
 
 def reproducibility(seed=9):

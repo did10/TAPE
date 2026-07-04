@@ -11,12 +11,34 @@ from .model import reproducibility, scaden
 PROPORTION_PREFIX = "$proportions_"
 
 
-def _parse_int_list(value: str) -> list[int]:
-    return [int(x.strip()) for x in value.strip("[]()").split(",") if x.strip()]
+def _parse_nested_int_list(value: str) -> list[list[int]]:
+    """Parse something like '[[256,128,64,32],[512,256,128,64]]' into a list of lists of ints."""
+    value = value.strip()
+    if not (value.startswith("[") and value.endswith("]")):
+        raise ValueError("Must be a list of lists, e.g. [[256,128,64,32],[512,256,128,64]]")
+    inner = value[1:-1]
+    result = []
+    for part in inner.split("],["):
+        part = part.strip().strip("[]")
+        items = [int(x.strip()) for x in part.split(",") if x.strip()]
+        if items:
+            result.append(items)
+    return result
 
 
-def _parse_float_list(value: str) -> list[float]:
-    return [float(x.strip()) for x in value.strip("[]()").split(",") if x.strip()]
+def _parse_nested_float_list(value: str) -> list[list[float]]:
+    """Parse something like '[[0,0,0,0],[0,0.3,0.2,0.1]]' into a list of lists of floats."""
+    value = value.strip()
+    if not (value.startswith("[") and value.endswith("]")):
+        raise ValueError("Must be a list of lists, e.g. [[0,0,0,0],[0,0.3,0.2,0.1]]")
+    inner = value[1:-1]
+    result = []
+    for part in inner.split("],["):
+        part = part.strip().strip("[]")
+        items = [float(x.strip()) for x in part.split(",") if x.strip()]
+        if items:
+            result.append(items)
+    return result
 
 
 def _load_training_data(h5ad_path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -54,13 +76,13 @@ def _load_expression(h5ad_path: Path) -> pd.DataFrame:
 
 
 def train(train_h5ad: Path, output_dir: Path, batch_size: int, epochs: int, seed: int, threads: int,
-          architecture: list[int], dropout: list[float]) -> Path:
+          architectures: list[list[int]], dropouts: list[list[float]]) -> Path:
     torch.set_num_threads(threads)
     expression, props = _load_training_data(train_h5ad)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     reproducibility(seed)
-    model = scaden(architecture, dropout, expression.to_numpy(), props.to_numpy(),
+    model = scaden(architectures, dropouts, expression.to_numpy(), props.to_numpy(),
                    batch_size=batch_size, epochs=epochs)
     model.train()
     model.save_model(str(output_dir), expression.columns.tolist(), props.columns.tolist())
@@ -95,9 +117,9 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--seed", type=int, default=0)
     train_parser.add_argument("--threads", type=int, help="Threads used by torch", default=4)
     train_parser.add_argument("--architecture", type=str, required=True,
-                              help="Hidden layer sizes as a list, e.g. [256,128,64,32]")
+                              help="Nested list of hidden layer sizes per model, e.g. [[256,128,64,32],[512,256,128,64]]")
     train_parser.add_argument("--dropout", type=str, required=True,
-                              help="Dropout rates per layer as a list, e.g. [0,0.3,0.2,0.1]")
+                              help="Nested list of dropout rates per model, e.g. [[0,0,0,0],[0,0.3,0.2,0.1]]")
 
     predict_parser = subparsers.add_parser("predict", help="Run Scaden inference from a saved model")
     predict_parser.add_argument("--model-dir", type=Path, required=True, help="Directory containing architecture.pt and model weights")
@@ -113,12 +135,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "train":
-        architecture = _parse_int_list(args.architecture)
-        dropout = _parse_float_list(args.dropout)
-        if len(architecture) != len(dropout):
-            parser.error("--architecture and --dropout must have the same length")
+        architectures = _parse_nested_int_list(args.architecture)
+        dropouts = _parse_nested_float_list(args.dropout)
+        if len(architectures) != len(dropouts):
+            parser.error("--architecture and --dropout must have the same number of models")
+        for i, (arch, do) in enumerate(zip(architectures, dropouts)):
+            if len(arch) != len(do):
+                parser.error(f"Model {i}: --architecture ({arch}) and --dropout ({do}) must have the same number of layers")
         train(args.train_h5ad, args.output_dir, args.batch_size, args.epochs, args.seed, args.threads,
-              architecture, dropout)
+              architectures, dropouts)
     elif args.command == "predict":
         predict(args.model_dir, args.test_h5ad, args.output_dir, args.threads)
     else:
