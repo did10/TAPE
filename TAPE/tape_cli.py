@@ -10,11 +10,13 @@ from .model import reproducibility, scaden
 
 PROPORTION_PREFIX = "$proportions_"
 
-ARCHITECTURES = {
-    "m256": ([256, 128, 64, 32], [0, 0, 0, 0]),
-    "m512": ([512, 256, 128, 64], [0, 0.3, 0.2, 0.1]),
-    "m1024": ([1024, 512, 256, 128], [0, 0.6, 0.3, 0.1]),
-}
+
+def _parse_int_list(value: str) -> list[int]:
+    return [int(x.strip()) for x in value.strip("[]()").split(",") if x.strip()]
+
+
+def _parse_float_list(value: str) -> list[float]:
+    return [float(x.strip()) for x in value.strip("[]()").split(",") if x.strip()]
 
 
 def _load_training_data(h5ad_path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -51,13 +53,15 @@ def _load_expression(h5ad_path: Path) -> pd.DataFrame:
     return expression
 
 
-def train(train_h5ad: Path, output_dir: Path, batch_size: int, epochs: int, seed: int, threads:int) -> Path:
+def train(train_h5ad: Path, output_dir: Path, batch_size: int, epochs: int, seed: int, threads: int,
+          architecture: list[int], dropout: list[float]) -> Path:
     torch.set_num_threads(threads)
     expression, props = _load_training_data(train_h5ad)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     reproducibility(seed)
-    model = scaden(ARCHITECTURES, expression.to_numpy(), props.to_numpy(), batch_size=batch_size, epochs=epochs)
+    model = scaden(architecture, dropout, expression.to_numpy(), props.to_numpy(),
+                   batch_size=batch_size, epochs=epochs)
     model.train()
     model.save_model(str(output_dir), expression.columns.tolist(), props.columns.tolist())
     return output_dir
@@ -90,6 +94,10 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--epochs", type=int, default=128)
     train_parser.add_argument("--seed", type=int, default=0)
     train_parser.add_argument("--threads", type=int, help="Threads used by torch", default=4)
+    train_parser.add_argument("--architecture", type=str, required=True,
+                              help="Hidden layer sizes as a list, e.g. [256,128,64,32]")
+    train_parser.add_argument("--dropout", type=str, required=True,
+                              help="Dropout rates per layer as a list, e.g. [0,0.3,0.2,0.1]")
 
     predict_parser = subparsers.add_parser("predict", help="Run Scaden inference from a saved model")
     predict_parser.add_argument("--model-dir", type=Path, required=True, help="Directory containing architecture.pt and model weights")
@@ -105,7 +113,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "train":
-        train(args.train_h5ad, args.output_dir, args.batch_size, args.epochs, args.seed, args.threads)
+        architecture = _parse_int_list(args.architecture)
+        dropout = _parse_float_list(args.dropout)
+        if len(architecture) != len(dropout):
+            parser.error("--architecture and --dropout must have the same length")
+        train(args.train_h5ad, args.output_dir, args.batch_size, args.epochs, args.seed, args.threads,
+              architecture, dropout)
     elif args.command == "predict":
         predict(args.model_dir, args.test_h5ad, args.output_dir, args.threads)
     else:
