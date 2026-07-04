@@ -57,6 +57,41 @@ def initialize_weight(m):
         nn.init.constant_(m.bias.data, 0)
 
 
+def ccc_loss(pred, target):
+    """Concordance Correlation Coefficient loss: 1 - CCC."""
+    pred_mean = pred.mean(dim=0, keepdim=True)
+    target_mean = target.mean(dim=0, keepdim=True)
+    pred_centered = pred - pred_mean
+    target_centered = target - target_mean
+
+    cov = (pred_centered * target_centered).mean(dim=0)
+    var_pred = (pred_centered ** 2).mean(dim=0)
+    var_target = (target_centered ** 2).mean(dim=0)
+    mean_diff = (pred_mean - target_mean).squeeze(0) ** 2
+
+    ccc = (2 * cov) / (var_pred + var_target + mean_diff + 1e-8)
+    return (1 - ccc).mean()
+
+
+def combined_loss(pred, target, alpha=0.5):
+    """Combined MSE + CCC loss."""
+    return alpha * F.mse_loss(pred, target) + (1 - alpha) * ccc_loss(pred, target)
+
+
+def cross_entropy_loss(pred, target, eps=1e-8):
+    """Cross-entropy loss for probability targets."""
+    return -(target * torch.log(pred + eps)).sum(dim=1).mean()
+
+
+LOSS_REGISTRY = {
+    "l1": F.l1_loss,
+    "mse": F.mse_loss,
+    "ccc": ccc_loss,
+    "combined": lambda p, t: combined_loss(p, t, alpha=0.5),
+    "cross_entropy": cross_entropy_loss,
+}
+
+
 class scaden():
     @classmethod
     def from_file(cls, load_path):
@@ -64,7 +99,7 @@ class scaden():
         obj.load_model(load_path)
         return obj
 
-    def __init__(self, architectures, dropouts, train_x, train_y, lr=1e-4, batch_size=128, epochs=20):
+    def __init__(self, architectures, dropouts, train_x, train_y, lr=1e-4, batch_size=128, epochs=20, loss_fn="l1"):
         self.architectures = architectures      # list of list[int], one per model
         self.dropouts = dropouts                # list of list[float], one per model
         self.models = []
@@ -76,6 +111,9 @@ class scaden():
         self.train_loader = DataLoader(simdatset(train_x, train_y), batch_size=batch_size, shuffle=True)
         self.gene_names = None
         self.label_names = None
+        if loss_fn not in LOSS_REGISTRY:
+            raise ValueError(f"Unknown loss_fn '{loss_fn}'. Choose from {list(LOSS_REGISTRY.keys())}")
+        self.loss_fn = loss_fn
 
     def _subtrain(self, model, optimizer):
         model.train()
@@ -83,11 +121,15 @@ class scaden():
         for _ in tqdm(range(self.epochs)):
             for data, label in self.train_loader:
                 optimizer.zero_grad()
-                batch_loss = F.l1_loss(model(data), label)
+                batch_loss = self._compute_loss(model(data), label)
                 batch_loss.backward()
                 optimizer.step()
                 loss.append(batch_loss.cpu().detach().numpy())
         return model, loss
+
+    def _compute_loss(self, pred, target):
+        """Compute loss using the configured loss function."""
+        return LOSS_REGISTRY[self.loss_fn](pred, target)
 
     def train(self):
         self.build_models()
@@ -123,6 +165,7 @@ class scaden():
             "outputdim": self.outputdim,
             "architectures": self.architectures,
             "dropouts": self.dropouts,
+            "loss_fn": self.loss_fn,
             "genes_names": genes_names,
             "label_names": label_names
         }, path + '/architecture.pt')
@@ -135,6 +178,7 @@ class scaden():
         self.outputdim = arch['outputdim']
         self.architectures = arch['architectures']
         self.dropouts = arch['dropouts']
+        self.loss_fn = arch.get('loss_fn', 'l1')
         self.gene_names = arch['genes_names']
         self.label_names = arch['label_names']
         self.build_models()
