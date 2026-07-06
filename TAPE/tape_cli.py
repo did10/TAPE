@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 from pathlib import Path
 import torch
 import pandas as pd
@@ -13,31 +14,41 @@ PROPORTION_PREFIX = "$proportions_"
 
 def _parse_nested_int_list(value: str) -> list[list[int]]:
     """Parse something like '[[256,128,64,32],[512,256,128,64]]' into a list of lists of ints."""
-    value = value.strip()
-    if not (value.startswith("[") and value.endswith("]")):
-        raise ValueError("Must be a list of lists, e.g. [[256,128,64,32],[512,256,128,64]]")
-    inner = value[1:-1]
+    try:
+        parsed = ast.literal_eval(value.strip())
+    except (ValueError, SyntaxError) as exc:
+        raise ValueError(
+            f"Could not parse architecture. Must be a list of lists of ints, "
+            f"e.g. [[256,128,64,32],[512,256,128,64]]. Got: {value!r}"
+        ) from exc
+    if not isinstance(parsed, list) or not all(isinstance(sublist, list) for sublist in parsed):
+        raise ValueError(
+            f"Must be a list of lists, e.g. [[256,128,64,32],[512,256,128,64]]. Got: {value!r}"
+        )
     result = []
-    for part in inner.split("],["):
-        part = part.strip().strip("[]")
-        items = [int(x.strip()) for x in part.split(",") if x.strip()]
-        if items:
-            result.append(items)
+    for sublist in parsed:
+        items = [int(x) for x in sublist]
+        result.append(items)
     return result
 
 
 def _parse_nested_float_list(value: str) -> list[list[float]]:
     """Parse something like '[[0,0,0,0],[0,0.3,0.2,0.1]]' into a list of lists of floats."""
-    value = value.strip()
-    if not (value.startswith("[") and value.endswith("]")):
-        raise ValueError("Must be a list of lists, e.g. [[0,0,0,0],[0,0.3,0.2,0.1]]")
-    inner = value[1:-1]
+    try:
+        parsed = ast.literal_eval(value.strip())
+    except (ValueError, SyntaxError) as exc:
+        raise ValueError(
+            f"Could not parse dropouts. Must be a list of lists of floats, "
+            f"e.g. [[0,0,0,0],[0,0.3,0.2,0.1]]. Got: {value!r}"
+        ) from exc
+    if not isinstance(parsed, list) or not all(isinstance(sublist, list) for sublist in parsed):
+        raise ValueError(
+            f"Must be a list of lists, e.g. [[0,0,0,0],[0,0.3,0.2,0.1]]. Got: {value!r}"
+        )
     result = []
-    for part in inner.split("],["):
-        part = part.strip().strip("[]")
-        items = [float(x.strip()) for x in part.split(",") if x.strip()]
-        if items:
-            result.append(items)
+    for sublist in parsed:
+        items = [float(x) for x in sublist]
+        result.append(items)
     return result
 
 
