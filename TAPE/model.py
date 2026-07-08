@@ -123,20 +123,27 @@ class scaden():
 
     def _subtrain(self, model, optimizer):
         model.train()
-        loss = []
+        epoch_losses = []
         best_val_loss = float('inf')
         best_state_dict = None
         epochs_no_improve = 0
         early_stopped = False
         best_epoch = 0
 
-        for epoch in tqdm(range(self.epochs)):
+        pbar = tqdm(range(self.epochs))
+        for epoch in pbar:
+            epoch_loss = 0.0
+            n_batches = 0
             for data, label in self.train_loader:
                 optimizer.zero_grad()
                 batch_loss = self._compute_loss(model(data), label)
                 batch_loss.backward()
                 optimizer.step()
-                loss.append(batch_loss.cpu().detach().numpy())
+                epoch_loss += batch_loss.item()
+                n_batches += 1
+            epoch_loss /= n_batches
+            epoch_losses.append(epoch_loss)
+            pbar.set_description(f'Epoch {epoch+1}/{self.epochs}, loss={epoch_loss:.4f}')
 
             # Early stopping check after each epoch
             if self.patience is not None and self.val_loader is not None:
@@ -161,10 +168,10 @@ class scaden():
                         early_stopped = True
                         model.load_state_dict(best_state_dict)
                         model = model.to(device)
-                        print(f'  Early stopping triggered at epoch {epoch+1}, best epoch {best_epoch+1}')
+                        pbar.set_description(f'Epoch {epoch+1}/{self.epochs}, loss={epoch_loss:.4f} (early stopped at epoch {best_epoch+1})')
                         break
 
-        return model, loss, early_stopped, best_epoch
+        return model, epoch_losses, early_stopped, best_epoch
 
     def _compute_loss(self, pred, target):
         """Compute loss using the configured loss function."""
@@ -174,10 +181,12 @@ class scaden():
         self.build_models()
         for i, model in enumerate(self.models):
             optimizer = torch.optim.Adam(model.parameters(), lr=self.lr, eps=1e-07, weight_decay=self.weight_decay)
-            print(f'Training model {i}/{len(self.models)} ...')
-            self.models[i], _, early_stopped, best_epoch = self._subtrain(model, optimizer)
+            print(f'Training model {i+1}/{len(self.models)} ...')
+            self.models[i], epoch_losses, early_stopped, best_epoch = self._subtrain(model, optimizer)
             if early_stopped:
-                print(f'  Model {i}: early stopped, best epoch {best_epoch+1}')
+                print(f'  Model {i+1}: early stopped at epoch {best_epoch+1}, best loss={epoch_losses[best_epoch]:.4f}')
+            else:
+                print(f'  Model {i+1}: final loss={epoch_losses[-1]:.4f}')
         print('Training is done')
 
     def build_models(self):
