@@ -102,7 +102,7 @@ class scaden():
         obj.load_model(load_path)
         return obj
 
-    def __init__(self, architectures, dropouts, train_x, train_y, lr=1e-4, batch_size=128, epochs=20, loss_fn="l1", weight_decay=0.0, patience=None, val_x=None, val_y=None, use_batch_norm=False, lr_scheduler="none"):
+    def __init__(self, architectures, dropouts, train_x, train_y, lr=1e-4, batch_size=128, epochs=20, loss_fn="l1", weight_decay=0.0, patience=None, val_x=None, val_y=None, use_batch_norm=False, lr_scheduler="none", noise_std=0.0):
         self.architectures = architectures      # list of list[int], one per model
         self.dropouts = dropouts                # list of list[float], one per model
         self.models = []
@@ -125,6 +125,7 @@ class scaden():
         self.loss_fn = loss_fn
         self.use_batch_norm = use_batch_norm
         self.lr_scheduler = lr_scheduler
+        self.noise_std = noise_std
 
     def _subtrain(self, model, optimizer):
         model.train()
@@ -135,7 +136,6 @@ class scaden():
         early_stopped = False
         best_epoch = 0
 
-        # Learning rate scheduler
         scheduler = None
         if self.lr_scheduler == "plateau":
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -151,6 +151,8 @@ class scaden():
             epoch_loss = 0.0
             n_batches = 0
             for data, label in self.train_loader:
+                if self.noise_std > 0:
+                    data = data + torch.randn_like(data) * self.noise_std
                 optimizer.zero_grad()
                 batch_loss = self._compute_loss(model(data), label)
                 batch_loss.backward()
@@ -187,7 +189,6 @@ class scaden():
                         pbar.set_description(f'Epoch {epoch+1}/{self.epochs}, loss={epoch_loss:.4f} (early stopped at epoch {best_epoch+1})')
                         break
 
-            # LR scheduler step
             if scheduler is not None:
                 if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                     if self.patience is not None and self.val_loader is not None:
@@ -246,6 +247,7 @@ class scaden():
             "patience": self.patience,
             "use_batch_norm": self.use_batch_norm,
             "lr_scheduler": self.lr_scheduler,
+            "noise_std": self.noise_std,
             "genes_names": genes_names,
             "label_names": label_names
         }, path + '/architecture.pt')
@@ -263,6 +265,7 @@ class scaden():
         self.patience = arch.get('patience', None)
         self.use_batch_norm = arch.get('use_batch_norm', False)
         self.lr_scheduler = arch.get('lr_scheduler', 'none')
+        self.noise_std = arch.get('noise_std', 0.0)
         self.val_loader = None
         self.gene_names = arch['genes_names']
         self.label_names = arch['label_names']

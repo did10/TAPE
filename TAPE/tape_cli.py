@@ -90,7 +90,7 @@ def train(train_h5ad: Path, output_dir: Path, batch_size: int, epochs: int, seed
           architectures: list[list[int]], dropouts: list[list[float]], loss_fn: str = "l1",
           weight_decay: float = 0.0, patience: int | None = None,
           val_h5ad: Path | None = None, use_batch_norm: bool = False,
-          lr_scheduler: str = "none") -> Path:
+          lr_scheduler: str = "none", noise_std: float = 0.0) -> Path:
     torch.set_num_threads(threads)
     expression, props = _load_training_data(train_h5ad)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -107,6 +107,7 @@ def train(train_h5ad: Path, output_dir: Path, batch_size: int, epochs: int, seed
     model = scaden(architectures, dropouts, expression.to_numpy(), props.to_numpy(),
                    batch_size=batch_size, epochs=epochs, loss_fn=loss_fn, weight_decay=weight_decay,
                    patience=patience, use_batch_norm=use_batch_norm, lr_scheduler=lr_scheduler,
+                   noise_std=noise_std,
                    val_x=val_expr.to_numpy() if val_expr is not None else None,
                    val_y=val_props.to_numpy() if val_props is not None else None)
     model.train()
@@ -159,6 +160,8 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--lr-scheduler", "--lr_scheduler", dest="lr_scheduler", type=str, default="none",
                               choices=["none", "plateau", "cosine"],
                               help="Learning rate scheduler: none, plateau (ReduceLROnPlateau), or cosine (CosineAnnealingLR) (default: none)")
+    train_parser.add_argument("--noise-std", "--noise_std", dest="noise_std", type=float, default=0.0,
+                              help="Standard deviation of Gaussian noise added to training inputs. Use 0.01-0.1 for regularization against domain shift (default: 0.0)")
 
     predict_parser = subparsers.add_parser("predict", help="Run Scaden inference from a saved model")
     predict_parser.add_argument("--model-dir", type=Path, required=True, help="Directory containing architecture.pt and model weights")
@@ -184,7 +187,8 @@ def main(argv: list[str] | None = None) -> int:
         train(args.train_h5ad, args.output_dir, args.batch_size, args.epochs, args.seed, args.threads,
               architectures, dropouts, loss_fn=args.loss_fn, weight_decay=args.weight_decay,
               patience=args.patience, val_h5ad=args.val_h5ad,
-              use_batch_norm=args.use_batch_norm, lr_scheduler=args.lr_scheduler)
+              use_batch_norm=args.use_batch_norm, lr_scheduler=args.lr_scheduler,
+              noise_std=args.noise_std)
     elif args.command == "predict":
         predict(args.model_dir, args.test_h5ad, args.output_dir, args.threads)
     else:
