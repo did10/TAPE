@@ -27,12 +27,13 @@ class simdatset(Dataset):
 
 
 class MLP(nn.Module):
-    def __init__(self, input_dim, output_dim, hidden_units, dropout_rates):
+    def __init__(self, input_dim, output_dim, hidden_units, dropout_rates, use_batch_norm=False):
         super().__init__()
         self.hidden_units = hidden_units
         self.dropout_rates = dropout_rates
         self.input_dim = input_dim
         self.output_dim = output_dim
+        self.use_batch_norm = use_batch_norm
         self.model = self._mlp()
 
     def forward(self, x):
@@ -43,6 +44,8 @@ class MLP(nn.Module):
         prev_dim = self.input_dim
         for i in range(len(self.hidden_units)):
             layers.append(nn.Linear(prev_dim, self.hidden_units[i]))
+            if self.use_batch_norm:
+                layers.append(nn.BatchNorm1d(self.hidden_units[i]))
             layers.append(nn.Dropout(self.dropout_rates[i]))
             layers.append(nn.ReLU())
             prev_dim = self.hidden_units[i]
@@ -99,7 +102,7 @@ class scaden():
         obj.load_model(load_path)
         return obj
 
-    def __init__(self, architectures, dropouts, train_x, train_y, lr=1e-4, batch_size=128, epochs=20, loss_fn="l1", weight_decay=0.0, patience=None, val_x=None, val_y=None):
+    def __init__(self, architectures, dropouts, train_x, train_y, lr=1e-4, batch_size=128, epochs=20, loss_fn="l1", weight_decay=0.0, patience=None, val_x=None, val_y=None, use_batch_norm=False, lr_scheduler="none"):
         self.architectures = architectures      # list of list[int], one per model
         self.dropouts = dropouts                # list of list[float], one per model
         self.models = []
@@ -120,6 +123,8 @@ class scaden():
         if loss_fn not in LOSS_REGISTRY:
             raise ValueError(f"Unknown loss_fn '{loss_fn}'. Choose from {list(LOSS_REGISTRY.keys())}")
         self.loss_fn = loss_fn
+        self.use_batch_norm = use_batch_norm
+        self.lr_scheduler = lr_scheduler
 
     def _subtrain(self, model, optimizer):
         model.train()
@@ -129,6 +134,17 @@ class scaden():
         epochs_no_improve = 0
         early_stopped = False
         best_epoch = 0
+
+        # Learning rate scheduler
+        scheduler = None
+        if self.lr_scheduler == "plateau":
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-7
+            )
+        elif self.lr_scheduler == "cosine":
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=self.epochs, eta_min=1e-7
+            )
 
         pbar = tqdm(range(self.epochs))
         for epoch in pbar:
@@ -171,6 +187,16 @@ class scaden():
                         pbar.set_description(f'Epoch {epoch+1}/{self.epochs}, loss={epoch_loss:.4f} (early stopped at epoch {best_epoch+1})')
                         break
 
+            # LR scheduler step
+            if scheduler is not None:
+                if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                    if self.patience is not None and self.val_loader is not None:
+                        scheduler.step(val_loss)
+                    else:
+                        scheduler.step(epoch_loss)
+                else:
+                    scheduler.step()
+
         return model, epoch_losses, early_stopped, best_epoch
 
     def _compute_loss(self, pred, target):
@@ -192,7 +218,7 @@ class scaden():
     def build_models(self):
         self.models = []
         for hidden_units, dropout_rates in zip(self.architectures, self.dropouts):
-            model = MLP(self.inputdim, self.outputdim, hidden_units, dropout_rates)
+            model = MLP(self.inputdim, self.outputdim, hidden_units, dropout_rates, use_batch_norm=self.use_batch_norm)
             model = model.to(device)
             model.apply(initialize_weight)
             self.models.append(model)
@@ -218,6 +244,8 @@ class scaden():
             "loss_fn": self.loss_fn,
             "weight_decay": self.weight_decay,
             "patience": self.patience,
+            "use_batch_norm": self.use_batch_norm,
+            "lr_scheduler": self.lr_scheduler,
             "genes_names": genes_names,
             "label_names": label_names
         }, path + '/architecture.pt')
@@ -233,6 +261,8 @@ class scaden():
         self.loss_fn = arch.get('loss_fn', 'l1')
         self.weight_decay = arch.get('weight_decay', 0.0)
         self.patience = arch.get('patience', None)
+        self.use_batch_norm = arch.get('use_batch_norm', False)
+        self.lr_scheduler = arch.get('lr_scheduler', 'none')
         self.val_loader = None
         self.gene_names = arch['genes_names']
         self.label_names = arch['label_names']
