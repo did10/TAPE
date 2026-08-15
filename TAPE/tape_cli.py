@@ -161,7 +161,7 @@ def build_parser() -> argparse.ArgumentParser:
                               choices=["none", "plateau", "cosine"],
                               help="Learning rate scheduler: none, plateau (ReduceLROnPlateau), or cosine (CosineAnnealingLR) (default: none)")
     train_parser.add_argument("--noise-std", "--noise_std", dest="noise_std", type=float, default=0.0,
-                              help="Standard deviation of Gaussian noise added to training inputs. Use 0.01-0.1 for regularization against domain shift (default: 0.0)")
+                              help="Gaussian noise std-dev added to training inputs (default: 0.0)")
 
     predict_parser = subparsers.add_parser("predict", help="Run Scaden inference from a saved model")
     predict_parser.add_argument("--model-dir", type=Path, required=True, help="Directory containing architecture.pt and model weights")
