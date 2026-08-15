@@ -7,10 +7,13 @@ A clean **PyTorch reimplementation of [Scaden](https://github.com/KevinMenden/sc
 method for **deconvolving bulk RNA-seq samples into cell-type fractions** using a
 single-cell reference.
 
-The original Scaden is implemented in TensorFlow and was published as part of the
-*TAPE* paper. This repository removes all TAPE-specific code and ships an
-improved, standalone PyTorch version of Scaden with a small CLI, additional
-training options, and fail-fast input validation.
+**A note on the lineage:** the original Scaden is implemented in **TensorFlow**
+([Menden et al., 2020](https://www.science.org/doi/10.1126/sciadv.aba2619)). The
+*TAPE* repository this project is forked from already contained a **PyTorch**
+port of Scaden (the TAPE authors re-implemented it because the TensorFlow
+version was hard to test). This repository removes all TAPE-specific code and
+ships that PyTorch implementation as a standalone, improved package — with a
+CLI, more configuration options, and fail-fast input validation.
 
 ---
 
@@ -157,15 +160,21 @@ fractions = model.predict(test_x)  # (samples, cell types), rows sum to 1
 
 ---
 
-## Differences from the original Scaden
+## What this project does differently
 
-- Written in **PyTorch** instead of TensorFlow (the original implementation was
-  not easy to run/test, which is why the TAPE authors wrote a PyTorch port).
-- Added configurable loss functions (including CCC and a combined loss),
-  early stopping, batch normalization, LR schedulers, weight decay, and input
-  noise.
-- Added a simple CLI and strict gene-name validation between training and test
-  data.
+Compared to the original TensorFlow Scaden (and the bare PyTorch port inside the
+*TAPE* repository), this project:
+
+- **Does not simulate bulk data** — generating synthetic training data from a
+  single-cell reference is out of scope here. Use [Our tool] for that.
+- **Does not normalize expression data** — preprocessing/normalization is out of
+  scope here. Use [Our tool] for that.
+- **Adds a CLI interface** — `scaden-pytorch train` / `scaden-pytorch predict`,
+  with fail-fast input validation (e.g. gene mismatches between training and
+  test data raise an error instead of silently dropping genes).
+- **Adds more configuration options** — configurable loss functions (including
+  CCC and a combined loss), early stopping, batch normalization, LR schedulers,
+  weight decay, and input noise.
 
 ---
 
