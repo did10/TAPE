@@ -15,6 +15,16 @@ version was hard to test). This repository removes all TAPE-specific code and
 ships that PyTorch implementation as a standalone, improved package — with a
 CLI, more configuration options, and fail-fast input validation.
 
+> [!WARNING]
+> This is **not an exact reproduction** of the Scaden method as described in the
+> paper. The code in this repository has been reworked and extended, and it may
+> **deviate from the original paper substantially** (network architectures,
+> training scheme, and defaults differ). It is best understood as a
+> *Scaden-inspired* deconvolution tool that trades strict fidelity to the
+> published method for **more flexibility** and easier usability. If your goal
+> is to reproduce the exact published Scaden results, prefer the original
+> implementation.
+
 ---
 
 ## Features
@@ -163,7 +173,9 @@ fractions = model.predict(test_x)  # (samples, cell types), rows sum to 1
 ## What this project does differently
 
 Compared to the original TensorFlow Scaden (and the bare PyTorch port inside the
-*TAPE* repository), this project:
+*TAPE* repository), this project is more of a **flexible, Scaden-inspired**
+tool than a faithful copy — the implementation may deviate from the paper in
+various details. Concretely, it:
 
 - **Does not simulate bulk data** — generating synthetic training data from a
   single-cell reference is out of scope here. Use [Our tool] for that.

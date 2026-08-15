@@ -135,9 +135,7 @@ def predict(model_dir: Path, test_h5ad: Path, output_dir: Path, threads: int,
     train_genes = model.gene_names
     test_genes = expression.columns.tolist()
 
-    # Fail loudly on any gene mismatch by default so users never silently lose
-    # genes. Column order is aligned automatically (reordering never changes the
-    # result); extra genes can be dropped with --allow-gene-subset.
+
     missing = [g for g in train_genes if g not in test_genes]
     extra = [g for g in test_genes if g not in train_genes]
 
@@ -162,7 +160,7 @@ def predict(model_dir: Path, test_h5ad: Path, output_dir: Path, threads: int,
             f"training (e.g. {extra[:5]})."
         )
 
-    # Align the test columns to the training gene order (no-op if already identical).
+
     expression = expression[train_genes]
     predictions = model.predict(expression.to_numpy())
     pred_df = pd.DataFrame(predictions, columns=model.label_names, index=expression.index)
