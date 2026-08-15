@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 import random
-import warnings
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -8,25 +10,44 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
+#: Global torch device: CUDA if available, otherwise CPU.
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-warnings.filterwarnings("ignore")
 
 
-class simdatset(Dataset):
-    def __init__(self, X, Y):
+class SimDataset(Dataset):
+    """PyTorch Dataset wrapping numpy feature/label arrays."""
+
+    def __init__(self, X: np.ndarray, Y: np.ndarray):
         self.X = X
         self.Y = Y
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.X)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int):
         x = torch.from_numpy(self.X[index]).float().to(device)
         y = torch.from_numpy(self.Y[index]).float().to(device)
         return x, y
 
 
 class MLP(nn.Module):
+    """Feed-forward network with softmax output used as a Scaden ensemble member.
+
+    Parameters
+    ----------
+    input_dim : int
+        Number of input features (genes).
+    output_dim : int
+        Number of output units (cell types).
+    hidden_units : list[int]
+        Number of units per hidden layer.
+    dropout_rates : list[float]
+        Dropout probability applied after each hidden layer (same length as
+        ``hidden_units``).
+    use_batch_norm : bool
+        Insert a BatchNorm1d layer after every Linear layer.
+    """
+
     def __init__(self, input_dim, output_dim, hidden_units, dropout_rates, use_batch_norm=False):
         super().__init__()
         self.hidden_units = hidden_units
@@ -95,14 +116,54 @@ LOSS_REGISTRY = {
 }
 
 
-class scaden():
+class Scaden:
+    """Ensemble of MLPs that deconvolve bulk RNA-seq into cell-type fractions.
+
+    This is a PyTorch reimplementation of the deep learning model described in
+    Menden et al. (Scaden, Sci. Adv. 2020). Predictions are averaged across an
+    ensemble of independently trained MLPs.
+    """
+
     @classmethod
-    def from_file(cls, load_path):
+    def from_file(cls, load_path: str | Path) -> "Scaden":
+        """Load a previously saved :class:`Scaden` model from disk."""
         obj = cls.__new__(cls)
         obj.load_model(load_path)
         return obj
 
     def __init__(self, architectures, dropouts, train_x, train_y, lr=1e-4, batch_size=128, epochs=20, loss_fn="l1", weight_decay=0.0, patience=None, val_x=None, val_y=None, use_batch_norm=False, lr_scheduler="none", noise_std=0.0):
+        """Train a Scaden ensemble on simulated training data.
+
+        Parameters
+        ----------
+        architectures : list[list[int]]
+            Hidden layer sizes per ensemble member.
+        dropouts : list[list[float]]
+            Dropout rates per layer per ensemble member (same shape as
+            ``architectures``).
+        train_x, train_y : numpy.ndarray
+            Training features (samples x genes) and labels (samples x cell types).
+        lr : float
+            Adam learning rate.
+        batch_size : int
+            Training batch size.
+        epochs : int
+            Number of training epochs per model.
+        loss_fn : str
+            One of ``LOSS_REGISTRY`` keys (e.g. ``"l1"``, ``"mse"``, ``"ccc"``).
+        weight_decay : float
+            L2 weight decay for Adam.
+        patience : int | None
+            Early-stopping patience; requires ``val_x``/``val_y``.
+        val_x, val_y : numpy.ndarray | None
+            Optional validation data used for early stopping.
+        use_batch_norm : bool
+            Add BatchNorm1d after each Linear layer.
+        lr_scheduler : str
+            One of ``"none"``, ``"plateau"`` or ``"cosine"``.
+        noise_std : float
+            Std-dev of Gaussian noise added to inputs during training.
+        """
         self.architectures = architectures      # list of list[int], one per model
         self.dropouts = dropouts                # list of list[float], one per model
         self.models = []
@@ -113,9 +174,9 @@ class scaden():
         self.patience = patience
         self.inputdim = train_x.shape[1]
         self.outputdim = train_y.shape[1]
-        self.train_loader = DataLoader(simdatset(train_x, train_y), batch_size=batch_size, shuffle=True)
+        self.train_loader = DataLoader(SimDataset(train_x, train_y), batch_size=batch_size, shuffle=True)
         if val_x is not None and val_y is not None:
-            self.val_loader = DataLoader(simdatset(val_x, val_y), batch_size=batch_size, shuffle=False)
+            self.val_loader = DataLoader(SimDataset(val_x, val_y), batch_size=batch_size, shuffle=False)
         else:
             self.val_loader = None
         self.gene_names = None
@@ -236,13 +297,19 @@ class scaden():
                 pred_sum += pred
         return (pred_sum / len(self.models)).cpu().detach().numpy()
 
-    def save_model(self, path, genes_names: list, label_names: list):
+    def save_model(self, path: str | Path, genes_names: list, label_names: list) -> None:
+        """Save the ensemble (architecture metadata + weights) to ``path``."""
+        out_dir = Path(path)
+        out_dir.mkdir(parents=True, exist_ok=True)
         torch.save({
             "inputdim": self.inputdim,
             "outputdim": self.outputdim,
             "architectures": self.architectures,
             "dropouts": self.dropouts,
             "loss_fn": self.loss_fn,
+            "lr": self.lr,
+            "batch_size": self.batch_size,
+            "epochs": self.epochs,
             "weight_decay": self.weight_decay,
             "patience": self.patience,
             "use_batch_norm": self.use_batch_norm,
@@ -250,17 +317,22 @@ class scaden():
             "noise_std": self.noise_std,
             "genes_names": genes_names,
             "label_names": label_names
-        }, path + '/architecture.pt')
+        }, out_dir / "architecture.pt")
         for i, model in enumerate(self.models):
-            torch.save(model.state_dict(), path + f'/model_{i}.pt')
+            torch.save(model.state_dict(), out_dir / f"model_{i}.pt")
 
-    def load_model(self, path):
-        arch = torch.load(path + '/architecture.pt', map_location='cpu')
+    def load_model(self, path: str | Path) -> None:
+        """Load an ensemble saved with :meth:`save_model`."""
+        in_dir = Path(path)
+        arch = torch.load(in_dir / "architecture.pt", map_location="cpu")
         self.inputdim = arch['inputdim']
         self.outputdim = arch['outputdim']
         self.architectures = arch['architectures']
         self.dropouts = arch['dropouts']
         self.loss_fn = arch.get('loss_fn', 'l1')
+        self.lr = arch.get('lr', 1e-4)
+        self.batch_size = arch.get('batch_size', 128)
+        self.epochs = arch.get('epochs', 20)
         self.weight_decay = arch.get('weight_decay', 0.0)
         self.patience = arch.get('patience', None)
         self.use_batch_norm = arch.get('use_batch_norm', False)
@@ -271,13 +343,15 @@ class scaden():
         self.label_names = arch['label_names']
         self.build_models()
         for i, model in enumerate(self.models):
-            model.load_state_dict(torch.load(path + f'/model_{i}.pt', map_location='cpu'))
+            model.load_state_dict(torch.load(in_dir / f"model_{i}.pt", map_location="cpu"))
 
 
-def reproducibility(seed=9):
+def reproducibility(seed: int = 9) -> None:
+    """Pin all random seeds so that training runs are reproducible."""
     torch.manual_seed(seed)
     random.seed(seed)
     np.random.seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
         torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False

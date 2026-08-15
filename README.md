@@ -1,95 +1,209 @@
-# TAPE: Tissue-AdaPtive autoEncoder for accurate deconvolution and gene expression analysis
+# scaden-pytorch
 
-![scTAPE](https://img.shields.io/badge/scTAPE-v1.1.2-blue)![GPL](https://img.shields.io/github/license/poseidonchan/TAPE)[![DOI](https://zenodo.org/badge/386163911.svg)](https://zenodo.org/badge/latestdoi/386163911)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue)](#installation)
 
-**This model is able to accurately deconvolve bulk RNA-seq data into cell fractions and predict cell-type-specific gene expression at cell-type level based on scRNA-seq data**.
+A clean **PyTorch reimplementation of [Scaden](https://github.com/KevinMenden/scaden)** — a deep-learning
+method for **deconvolving bulk RNA-seq samples into cell-type fractions** using a
+single-cell reference.
 
-related article ***Deep autoencoder for interpretable tissue-adaptive deconvolution and cell-type-specific gene analysis*** is accepted by *Nature Communications*
+The original Scaden is implemented in TensorFlow and was published as part of the
+*TAPE* paper. This repository removes all TAPE-specific code and ships an
+improved, standalone PyTorch version of Scaden with a small CLI, additional
+training options, and fail-fast input validation.
 
-## Setup
+---
 
-TAPE uses PyTorch as its Deep-learning framework, so the suitable version of PyTorch will accelerate the model training process. We recommend users to install PyTorch(>=1.8.0) with ***right*** compute platform (CUDA, CPU or ROCm) from its official [website](https://pytorch.org) in advance.
+## Features
 
-For example, we used NVIDIA GPU RTX 3090, so we choose the CUDA version 11.1 and the command is:
+- **Ensemble deconvolution** — predictions are averaged over an ensemble of
+  independently trained MLPs (softmax outputs = cell-type fractions).
+- **Multiple loss functions** — `l1`, `mse`, `ccc` (concordance correlation
+  coefficient), `combined` (MSE + CCC), `cross_entropy`.
+- **Early stopping** on a validation dataset with patience.
+- **Batch normalization**, **learning-rate schedulers** (`plateau`, `cosine`),
+  **weight decay**, and **input noise** for regularization.
+- **Fail-fast input validation** — gene mismatches between training and test
+  data raise an error by default, so you never silently lose genes.
+- **Reproducible training** via a fixed random seed.
+- **Python API** and a **command-line interface** (`scaden-pytorch`).
+
+---
+
+## Installation
+
+Requires Python 3.9+ and PyTorch (see [pytorch.org](https://pytorch.org) for
+the version matching your compute platform — CUDA, ROCm, or CPU).
+
+From GitHub:
 
 ```bash
-pip install torch==1.8.0+cu111 torchvision==0.9.0+cu111 torchaudio==0.8.0 -f https://download.pytorch.org/whl/torch_stable.html
+pip install git+https://github.com/did10/TAPE.git
 ```
 
-If PyTorch is successfully installed, then TAPE could be installed from PyPI directly:
-
-***Update: I relax the dependece requirements to enable the compatibility with current packages***.
+Or clone and install in editable mode for development:
 
 ```bash
-pip install scTAPE==1.1.2
+git clone https://github.com/did10/TAPE.git
+cd TAPE
+pip install -e .
 ```
-Usually, the installation time depends on your downloading speed.
-## Usage
 
-Required Files:
-1. single-cell reference: txt format, indices are cell types, columns are gene names
-2. bulk data: tabular format, needed to specify the seperation ('\t',','or others), indices are sample names, columns are gene names
-3. gene length file: used to scale the expression value, columns should contain: [Gene name, Transcript start (bp), Transcript end (bp)]. This is provided in ./data/ directory.
+This installs the `scaden-pytorch` command-line tool and the `scaden_pytorch`
+Python package.
 
-***Warning: single-cell reference and bulk samples should contain the same cell types***
+---
+
+## Data format
+
+Both `train` and `predict` use `.h5ad` files (AnnData).
+
+**Training data** must contain:
+
+- a gene-expression matrix (samples × genes), and
+- ground-truth cell-type proportions in the `obs` table, with column names
+  prefixed by `$proportions_`, e.g. `$proportions_B cells`,
+  `$proportions_T cells`, ...
+
+The prefix is configurable with `--proportion-prefix`.
+
+**Test data** only needs the gene-expression matrix (samples × genes).
+
+> [!IMPORTANT]
+> The gene names in the test dataset must match the genes the model was
+> trained on. By default the CLI **fails** if there is any mismatch:
+>
+> - **Missing genes** (in training, not in test) are always an error — the
+>   model's input size is fixed at training time, so they cannot be filled in.
+> - **Extra genes** (in test, not in training) are an error by default; if you
+>   know what you are doing, pass `--allow-gene-subset` to ignore them (a
+>   warning is printed).
+>
+> Column *order* does not matter — the test columns are reordered to match the
+> training genes automatically.
+
+---
+
+## Command-line usage
+
+### Train a model
+
+```bash
+scaden-pytorch train \
+  --train-h5ad training_simulations.h5ad \
+  --output-dir models/my_scaden \
+  --epochs 128 \
+  --batch-size 128
+```
+
+The output directory will contain `architecture.pt` (model metadata, gene and
+cell-type names) plus one `model_<i>.pt` weight file per ensemble member.
+
+Key training options (see `scaden-pytorch train --help` for all):
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--architecture` | 3 models, e.g. `[[256,128,64,32],[512,256,128,64],[1024,512,256,128]]` | Nested list of hidden layer sizes per ensemble member |
+| `--dropout` | matching dropout rates | Nested list of dropout rates per layer per model |
+| `--loss-fn` | `l1` | `l1`, `mse`, `ccc`, `combined`, `cross_entropy` |
+| `--epochs` | `128` | Training epochs per model |
+| `--batch-size` | `128` | Training batch size |
+| `--seed` | `0` | Random seed for reproducibility |
+| `--patience` / `--val-h5ad` | — | Early stopping patience and validation data |
+| `--use-batch-norm` | off | Add BatchNorm1d after each Linear layer |
+| `--lr-scheduler` | `none` | `none`, `plateau`, or `cosine` |
+| `--weight-decay` | `0.0` | L2 weight decay for Adam |
+| `--noise-std` | `0.0` | Std-dev of Gaussian input noise during training |
+| `--proportion-prefix` | `$proportions_` | Prefix of ground-truth proportion columns |
+
+### Predict cell-type fractions
+
+```bash
+scaden-pytorch predict \
+  --model-dir models/my_scaden \
+  --test-h5ad bulk_samples.h5ad \
+  --output-dir predictions
+```
+
+Writes `predictions.tsv` (samples × cell types, fractions summing to 1) into the
+output directory.
+
+---
+
+## Python API
 
 ```python
-# basic example
-from TAPE import Deconvolution
-SignatureMatrix, CellFractionPrediction = \
-    Deconvolution(sc_ref, bulkdata, sep='\t', scaler='mms',
-                  datatype='counts', genelenfile='./GeneLength.txt',
-                  mode='overall', adaptive=True, variance_threshold=0.98,
-                  save_model_name=None,
-                  batch_size=128, epochs=128, seed=1)
-```
-parameters:
+import numpy as np
+from scaden_pytorch import Scaden, reproducibility
 
-1. scaler: use '**mms**' or '**ss**' scaler to preprocess datasets, 'mms' stands for min-max scaler, 'ss' stands for standard scaler. In the paper, all datasets were tested using 'mms'.
-2. datatype: use '**TPM**', '**FPKM**' or '**counts**'. Users can choose different normalization method based on your single-cell seq technique, if single-cell data is from 10X Genomics, users should use '**counts**' to maintain a resonable procedure. The explanation could be found from the [webpage](https://kb.10xgenomics.com/hc/en-us/articles/115003684783-Should-I-calculate-TPM-RPKM-or-FPKM-instead-of-counts-for-10x-Genomics-data-).
-3. mode: '**overall**' or '**high-resolution**'. If you need signature matrix for each sample, use 'high-resolution' mode.
-4. adaptive: **True** or **False**. If this is False, then it would not predict signature matrix, the return will be ***None***
-5. variance_threshold: Float number from 0 to 1, it means how many genes you want to keep (in proportion) according to variance from high to low.
-6. batch_size: **int**, related to training result. 32-128 are recommended. Smaller batch_size leads to more time consumption.
-7. epochs: **int**, related to training result. Typically, *5000-10000* iterations are enough for TAPE, the relation is $epochs=\frac{iteration \times batch\_size}{sampleing\_num}$
-8. seed: now, TAPE supports pinning the random seed to make results being reproducible.
+# train_x: (samples, genes), train_y: (samples, cell types)
+reproducibility(seed=0)
+model = Scaden(
+    architectures=[[256, 128, 64, 32], [512, 256, 128, 64]],
+    dropouts=[[0, 0.3, 0.2, 0.1], [0, 0.6, 0.3, 0.1]],
+    train_x=train_x,
+    train_y=train_y,
+    epochs=128,
+    batch_size=128,
+    loss_fn="l1",
+)
+model.train()
+model.save_model("models/my_scaden", gene_names=genes, label_names=cell_types)
 
-Since the original implementation of Scaden [[repository](https://github.com/KevinMenden/scaden)] [[paper](https://www.science.org/doi/10.1126/sciadv.aba2619)] is not easy for us to test, we implemented the PyTorch version of Scaden. If you want to use Scaden to deconvolve bulk RNA-seq data, you can use the following code:
-
-```python
-from TAPE.deconvolution import ScadenDeconvolution
-Pred = ScadenDeconvolution(sc_ref, bulkdata, sep='\t',
-                           batch_size=128, epochs=128)
+# later / in another process:
+model = Scaden.from_file("models/my_scaden")
+fractions = model.predict(test_x)  # (samples, cell types), rows sum to 1
 ```
 
+---
 
-## Example
-An example is placed in the **Test** directory. Please run the example to get familiar with TAPE.
+## Differences from the original Scaden
 
-Run the demo may takes 2 to 3 mins with GPU acceleration or 10 mins with CPU.
+- Written in **PyTorch** instead of TensorFlow (the original implementation was
+  not easy to run/test, which is why the TAPE authors wrote a PyTorch port).
+- Added configurable loss functions (including CCC and a combined loss),
+  early stopping, batch normalization, LR schedulers, weight decay, and input
+  noise.
+- Added a simple CLI and strict gene-name validation between training and test
+  data.
 
-
-## Issues
-If you find any bugs or have problems when you are using scTAPE, feel free to raise issues.
+---
 
 ## Citation
+
+If you use this software, please cite the **Scaden** paper (the method) and,
+if relevant, the **TAPE** paper (which popularized the PyTorch port this
+repository is derived from):
+
 ```bibtex
-@article{TAPE,
+@article{Menden2020,
+   author = {Menden, Kevin and Marouf, Mohamed and Oller, Sergio and Dalmia, Ananya and Magruder, Daniel S. and Klobler, Stefan and Heutink, Peter and Bonn, Stefan},
+   title = {Deep learning-based cell composition analysis from tissue expression profiles},
+   journal = {Science Advances},
+   volume = {6},
+   number = {30},
+   pages = {eaba2619},
+   year = {2020},
+   doi = {10.1126/sciadv.aba2619}
+}
+```
+
+```bibtex
+@article{Chen2022,
    author = {Chen, Yanshuo and Wang, Yixuan and Chen, Yuelong and Cheng, Yuqi and Wei, Yumeng and Li, Yunxiang and Wang, Jiuming and Wei, Yingying and Chan, Ting-Fung and Li, Yu},
    title = {Deep autoencoder for interpretable tissue-adaptive deconvolution and cell-type-specific gene analysis},
    journal = {Nature Communications},
    volume = {13},
    number = {1},
    pages = {6735},
-   ISSN = {2041-1723},
-   DOI = {10.1038/s41467-022-34550-9},
-   url = {https://doi.org/10.1038/s41467-022-34550-9},
    year = {2022},
-   type = {Journal Article}
+   doi = {10.1038/s41467-022-34550-9}
 }
 ```
 
-## Acknowledgement
-Special thanks to [*Mengyue Sun*](https://github.com/sunmy2019), for his help to accelerate the sampling process (in the simulation.py).
+---
 
-Much thanks to [*Yibo Liu*](https://github.com/jedibobo), for his advice on building such a nice repository.
+## License
+
+This project is a fork of [TAPE](https://github.com/poseidonchan/TAPE) and is
+distributed under the [GPL-3.0](LICENSE) license.

@@ -1,4 +1,15 @@
 
+# OS
 .DS_Store
+
+# IDE
 .idea/
-__pycache__
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
